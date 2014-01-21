@@ -1,0 +1,247 @@
+#!/usr/bin/env python
+"""
+Tails logfiles and forwards lines to various output sinks.
+Right now stdout and Redis (same as logastash) are the available output sinks.
+
+Config file is JSON format, similar options as logstash itself.  Sample:
+
+{
+    "input": [
+        {
+            "type":         "syslog",
+            "path":         "/var/log/messages"
+        }
+    ],
+
+    "output": [
+        {
+            "type":     "redis",
+            "host":     "localhost",
+            "key":      "syslogs"
+        }
+    ]
+}
+
+Input options:
+    path:       path to logfile (required)
+    type:       logstash 'type' field, for sorting logfile types. (required)
+    add_field:  optional hash of fields + arguments to add to the message
+
+Output options:
+    type:       'redis' or 'stdout'
+    host:       Redis host (required for redis)
+    port:       Redis port (optional)
+    key:        Name of the redis list used for this log (required for redis)
+
+Packages required: redis, pyinotify.
+
+"""
+
+__author__    = 'Michael Stella <michael@jwplayer.com>'
+__copyright__ = "Copyright (c) 2013 Long Tail Ad Solutions"
+__version__   = "1.0"
+
+import argparse
+import json
+import logging
+import os
+import pyinotify
+import redis
+import socket
+import sys
+
+logging.basicConfig(level=logging.DEBUG)
+log_input=logging.getLogger('input')
+log_output=logging.getLogger('output')
+
+inputs = {}
+outputs = []
+hostname = None
+notifier = None
+
+
+class Sink(object):
+    """Output sink base class"""
+
+    def log(self, **kwargs):
+        """Overload this to log a message and handle errors"""
+        pass
+
+
+class StdoutSink(Sink):
+    """Output to STDOUT in JSON format"""
+
+    def log(self, **kwargs):
+        """Log a message"""
+        print(json.dumps(kwargs))
+
+
+class RedisSink(Sink):
+    """Output to Redis"""
+
+    def __init__(self, host, key, port=6379):
+        self.host = host
+        self.port = port
+        self.key = key
+        self._connect()
+
+    def _connect(self):
+        self._conn = redis.StrictRedis(
+                        host=self.host,
+                        port=self.port,
+                        db=0,
+                        socket_timeout=30)
+        self._conn.ping()
+
+
+    def log(self, **kwargs):
+        """Log a message"""
+        try:
+            self._conn.rpush(self.key, json.dumps(kwargs))
+        except redis.exceptions.ConnectionError as e1:
+            try:
+                self._connect()
+                log_output.info("Redis: reconnected to server {0}:{1}".format(self.host, self.port))
+                self._conn.rpush(self.key, json.dumps(kwargs))
+            except Exception as e2:
+                log_output.error("Redis: {0}".format(e2))
+
+
+    def ping(self):
+        """Ping the server.  Boolean."""
+        return self._conn.ping()
+
+
+class FileProcessor(pyinotify.ProcessEvent):
+    """Processor class for inotify"""
+
+    def process_IN_MODIFY(self, event):
+        """When the file has changed, read the next line and log it"""
+        global inputs
+
+        if not event.path in inputs:
+            return
+
+        i = inputs[event.path]
+        fh = i['fh']
+
+        # figure out if we're seek'd past the end of the file,
+        # and if so, seek back to the begining
+        size = os.stat(event.path).st_size
+        if fh.tell() > size:
+            log_input.debug("File truncated, seeking to begining")
+            fh.seek(0,0)
+            return
+
+
+        # read a line, and build the output message
+        for line in i['fh'].readlines():
+            #line = i['fh'].readline().rstrip()
+            line = line.rstrip()
+            data = {
+                'message':  line,
+                'type':     i['type'],
+                'path':     event.path,
+                'host':     hostname,
+            }
+
+            # add fields from the config file
+            if 'add_field' in i:
+                for k,v in i['add_field'].items():
+                    if not k in data:
+                        data[k] = v
+
+            # send the message to all outputs
+            for o in outputs:
+                o.log(**data)
+
+
+def init(opts):
+    global inputs
+    global outputs
+    global notifier
+
+    logging.info("Startup")
+
+    # read config file
+    cfg = {}
+    with open(opts.cfgfile[0], 'r') as f:
+        try:
+            cfg = json.loads(f.read())
+        except ValueError as e:
+            logging.error("Could not read config file: {0}".format(e))
+            sys.exit(-1)
+
+
+    # connect to outputs
+    for o in cfg['output']:
+        if o['type'] == 'redis':
+            try:
+                r = RedisSink(o['host'], o['key'])
+                outputs.append(r)
+                log_output.debug("Connected to redis server '{0}'".format(o['host']))
+
+            except Exception as e:
+                log_output.error("Redis: {0}".format(e))
+
+        elif o['type'] == 'stdout':
+            outputs.append(StdoutSink())
+
+
+    wm = pyinotify.WatchManager()
+    notifier = pyinotify.Notifier(wm, FileProcessor())
+
+    # open input files
+    for i in cfg['input']:
+        try:
+            log_input.debug("Opening file '{0}'".format(i['path']))
+            f = open(i["path"], 'r')
+            f.seek(0, 2)
+            i['fh'] = f
+            inputs[i['path']] = i
+
+            log_input.debug("Watching file '{0}'".format(i['path']))
+            wm.add_watch(i['path'], pyinotify.IN_MODIFY)
+
+        except IOError as e:
+            log_input.error(e)
+
+
+    if len(inputs) < 1:
+        logging.error("No inputs, exiting")
+        sys.exit(-1)
+
+    if len(outputs) < 1:
+        logging.error("No outputs, exiting")
+        sys.exit(-1)
+
+
+def run():
+    ## loop
+    while True:
+        try:
+            notifier.process_events()
+            if notifier.check_events():
+                notifier.read_events()
+        except KeyboardInterrupt:
+            break
+
+    logging.info("Shutdown.")
+
+    # cleanup: stop the inotify, and close the file handles:
+    notifier.stop()
+    for i in inputs.values():
+        if i['fh']:
+            i['fh'].close()
+
+
+if __name__ == '__main__':
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('cfgfile', nargs=1, help="JSON-format config file")
+
+    opts = argparser.parse_args(sys.argv[1:])
+
+    hostname = socket.gethostname()
+    init(opts)
+    run()
+
