@@ -26,6 +26,8 @@ Input options:
     path:       path to logfile (required)
     type:       logstash 'type' field, for sorting logfile types. (required)
     add_field:  optional hash of fields + arguments to add to the message
+    multiline:  optional regex pattern (escaped for JSON) that when matched indicates
+                the current line belongs to the previous event
 
 Output options:
     type:       'redis' or 'stdout'
@@ -46,6 +48,7 @@ import json
 import logging
 import os
 import pyinotify
+import re
 import redis
 import socket
 import sys
@@ -115,6 +118,8 @@ class RedisSink(Sink):
 class FileProcessor(pyinotify.ProcessEvent):
     """Processor class for inotify"""
 
+    linebuffer = []
+
     def process_IN_MODIFY(self, event):
         """When the file has changed, read the next line and log it"""
         global inputs
@@ -138,6 +143,22 @@ class FileProcessor(pyinotify.ProcessEvent):
         for line in i['fh'].readlines():
             #line = i['fh'].readline().rstrip()
             line = line.rstrip()
+
+            # skip blanks
+            if not line:
+                continue
+
+            # see if this is a multiline match
+            if 'multiline' in i and re.match(i['multiline'], line, re.I):
+                self.linebuffer.append(line)
+                continue
+
+            if self.linebuffer:
+                # join up the multiline buffer
+                self.linebuffer.append(line)
+                line = '\n'.join(self.linebuffer)
+                self.linebuffer = []
+
             data = {
                 'message':  line,
                 'type':     i['type'],
