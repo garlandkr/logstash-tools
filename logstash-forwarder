@@ -120,28 +120,61 @@ class FileProcessor(pyinotify.ProcessEvent):
 
     linebuffer = []
 
+    def process_IN_CREATE(self, event):
+        """Re-open the file when created"""
+        global inputs
+
+        path = os.path.join(event.path, event.name)
+        if not path in inputs:
+            return
+
+        log_input.debug("Reopening file '{}'".format(path))
+
+        i = inputs[path]
+        f = open(i["path"], 'r')
+        f.seek(0, 2)
+        i['fh'] = f
+        inputs[i['path']] = i
+
+
+    def process_IN_DELETE(self, event):
+        """Close the file handle when a file gets deleted, but don't
+        stop watching it"""
+        global inputs
+
+        path = os.path.join(event.path, event.name)
+        if path in inputs:
+            log_input.debug("File '{}' deleted".format(path))
+            inputs[path]['fh'].close()
+
+
     def process_IN_MODIFY(self, event):
         """When the file has changed, read the next line and log it"""
         global inputs
+        path = os.path.join(event.path, event.name)
 
-        if not event.path in inputs:
+        if not path in inputs:
             return
 
-        i = inputs[event.path]
+        i = inputs[path]
+
+        # file handle might not be open
+        if not i['fh']:
+            i['fh'] = open(i["path"], 'r')
+
         fh = i['fh']
 
         # figure out if we're seek'd past the end of the file,
         # and if so, seek back to the begining
-        size = os.stat(event.path).st_size
+        size = os.stat(path).st_size
         if fh.tell() > size:
-            log_input.debug("File truncated, seeking to begining")
+            log_input.debug("File {} truncated".format(path))
             fh.seek(0,0)
             return
 
 
         # read a line, and build the output message
         for line in i['fh'].readlines():
-            #line = i['fh'].readline().rstrip()
             line = line.rstrip()
 
             # skip blanks
@@ -162,7 +195,7 @@ class FileProcessor(pyinotify.ProcessEvent):
             data = {
                 'message':  line,
                 'type':     i['type'],
-                'path':     event.path,
+                'path':     path,
                 'host':     hostname,
             }
 
@@ -222,7 +255,9 @@ def init(opts):
             inputs[i['path']] = i
 
             log_input.debug("Watching file '{0}'".format(i['path']))
-            wm.add_watch(i['path'], pyinotify.IN_MODIFY)
+            wm.add_watch(os.path.dirname(i['path']), 
+                pyinotify.IN_MODIFY|pyinotify.IN_DELETE|pyinotify.IN_CREATE
+                )
 
         except IOError as e:
             log_input.error(e)
