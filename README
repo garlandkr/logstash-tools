@@ -1,34 +1,9 @@
-Tails logfiles and forwards lines to various output sinks.
-Right now stdout and Redis (same as logastash) are the available output sinks.
 
-Config file is JSON format, similar options as logstash itself.  Sample:
+Logstash Tools - a collection of tools for use with Logstash.
 
-{
-    "input": [
-        {
-            "type":         "syslog",
-            "path":         "/var/log/messages"
-        }
-    ],
+Programs Included
+==================
 
-    "output": [
-        {
-            "type":     "redis",
-            "host":     "localhost",
-            "key":      "syslogs"
-        }
-    ]
-}
+* logfile-forwarder - a tool for tailing logfiles and forwarding into Logstash,
+  via Redis.
 
-Input options:
-    path:       path to logfile (required)
-    type:       logstash 'type' field, for sorting logfile types. (required)
-    add_field:  optional hash of fields + arguments to add to the message
-
-Output options:
-    type:       'redis' or 'stdout'
-    host:       Redis host (required for redis)
-    port:       Redis port (optional)
-    key:        Name of the redis list used for this log (required for redis)
-
-Packages required: redis, pyinotify.
