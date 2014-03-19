@@ -196,8 +196,8 @@ def init(opts):
             sys.exit(-1)
 
         input = CloudtrailInput(i['account'], i['bucket'], i['aws_key'], i['aws_secret'])
-        if 'fields' in i:
-            input.fields = i['fields']
+        if 'add_field' in i:
+            input.fields = i['add_field']
 
         inputs.append(input)
 
