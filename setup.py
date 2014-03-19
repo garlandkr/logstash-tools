@@ -1,13 +1,12 @@
 #!/usr/bin/env python
 
-try:
-    from setuptools import setup
-except ImportError:
-    from distutils.core import setup
+from ez_setup import use_setuptools
+use_setuptools()
+from setuptools import setup
 
 setup(
     name            = 'logstash-tools',
-    version         = '1.0',
+    version         = '1.0.1',
     description     = 'A collection of tools for use with logstash',
     long_description= open('README').read(),
     url             = 'https://github.com/JWPlayer/logstash-tools',
