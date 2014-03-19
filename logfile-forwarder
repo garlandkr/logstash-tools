@@ -166,18 +166,10 @@ def init(opts):
 
     logging.info("Startup")
 
-    # read config file
-    cfg = {}
-    with open(opts.cfgfile[0], 'r') as f:
-        try:
-            cfg = json.loads(f.read())
-        except ValueError as e:
-            logging.error("Could not read config file: {0}".format(e))
-            sys.exit(-1)
-
+    (cfginputs, cfgoutputs) = logstash.read_config(opts.cfgfile[0])
 
     # connect to outputs
-    for o in cfg['output']:
+    for o in cfgoutputs:
         if o['type'] == 'redis':
             try:
                 r = logstash.RedisSink(o['host'], o['key'])
@@ -195,7 +187,7 @@ def init(opts):
     notifier = pyinotify.Notifier(wm, FileProcessor())
 
     # open input files
-    for i in cfg['input']:
+    for i in cfginputs:
         try:
             log_input.debug("Opening file '{0}'".format(i['path']))
             f = open(i["path"], 'r')

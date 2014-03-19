@@ -1,0 +1,236 @@
+#!/bin/env python
+"""
+Extracts logfiles from AWS Cloudtrail and pipes into Logstash via Redis.
+
+Config file is JSON format, similar options as logstash itself.  Sample:
+
+{
+    "input": [
+        {
+            "type":         "cloudtrail",
+            "bucket":       "ec2-accounting",
+            "account":      "acctnum",
+            "aws_role":     "CloudtrailProcessor",
+            "add_field":    {
+                "environment": "dev"
+            }
+        }
+    ],
+
+    "output": [
+        {
+            "type":     "redis",
+            "host":     "localhost",
+            "key":      "syslogs"
+        }
+    ]
+}
+
+Input options:
+    type:       logstash 'type' field, for sorting logfile type.  Must be 'cloudtrail'.
+    add_field:  optional hash of fields + arguments to add to the message
+    aws_role:   Optional: IAM instance-profile role
+    aws_key:    Optional AWS access key
+    aws_secret: Optional AWS secret key (used with 'aws_key')
+    account:    AWS account number
+    bucket:     S3 bucket where logs are stored
+
+Output options:
+    type:       'redis' or 'stdout'
+    host:       Redis host (required for redis)
+    port:       Redis port (optional)
+    key:        Name of the redis list used for this log (required for redis)
+
+Packages required: redis, boto
+"""
+
+__author__    = 'Michael Stella <michael@jwplayer.com>'
+__copyright__ = "Copyright (c) 2014 Long Tail Ad Solutions"
+__version__   = "1.0"
+
+import argparse
+import datetime
+import gzip
+import json
+import logging
+import os
+import socket
+import sys
+
+import boto
+import redis
+
+import logstash
+
+S3PATH = 'AWSLogs/{acct}/CloudTrail/us-east-1/{year}/{month:02d}/{day:02d}/'
+METADATA = 'http://169.254.169.254/latest/meta-data/iam/security-credentials/'
+
+logging.basicConfig(level=logging.WARN, format='%(asctime)s %(levelname)-8s %(name)-6s %(message)s')
+log_input=logging.getLogger('input')
+log_input.setLevel(logging.DEBUG)
+log_output=logging.getLogger('output')
+log_output.setLevel(logging.DEBUG)
+
+inputs = []
+outputs = []
+hostname = None
+
+class CloudtrailInput(object):
+    """Cloudtrail input handling class"""
+
+    type = 'cloudtrail'
+
+    def __init__(self, account, bucket, aws_key, aws_secret, fields={}):
+        self.account = account
+        self.bucket = bucket
+        self.fields = fields
+
+        self.conn = boto.connect_s3(aws_key, aws_secret)
+
+
+    def get_files(self, date):
+        """Get all files in the bucket/prefix"""
+
+        prefix = S3PATH.format(acct=self.account, year=date.year, month=date.month, day=date.day)
+        log_input.info("Reading s3 bucket: s3://{}/{}".format(self.bucket, prefix))
+
+        bucket = self.conn.get_bucket(self.bucket)
+
+        for key in bucket.list(prefix):
+            log_input.debug(" reading file {}".format(key.name))
+
+            # download the file into a tempfile
+            tmpname = '/tmp/{}'.format(os.path.basename(key.name))
+            with open(tmpname , 'wb') as f:
+                key.get_file(f)
+
+            # send the downloaded logfile to processing
+            self.parse_file(tmpname)
+
+            # remove temporary file
+            if os.path.exists(tmpname):
+                os.unlink(tmpname)
+
+
+    def parse_file(self, fn):
+        """Process the downloaded logfile"""
+        opener = open
+        if fn.endswith('gz'):
+            opener = gzip.open
+
+        with opener(fn, 'rb') as f:
+            data = json.loads(f.read())
+            for rec in data['Records']:
+                rec.update({
+                    'type': self.type,
+                })
+
+            # add fields from the config file
+            for k,v in self.fields.items():
+                if not k in rec:
+                    rec[k] = v
+
+            # send the message to all outputs
+            for o in outputs:
+                o.log(**rec)
+
+
+def get_auth(role):
+    """Obtain a temporary authentication key from the metadata server.
+    Provide the role name, this returns a tuple: (aws_key, aws_secret)"""
+
+    try:
+        from urllib2 import urlopen, HTTPError
+    except:
+        from urllib.request import urlopen
+        from urllib.error import HTTPError
+
+    f = urlopen(METADATA + role, timeout=5)
+    data = json.loads(f.read())
+    return (data['AccessKeyId'], data['SecretAccessKey'])
+
+
+
+def init(opts):
+    global inputs
+    global outputs
+
+    (cfginputs, cfgoutputs) = logstash.read_config(opts.cfgfile[0])
+
+    # connect to outputs
+    for o in cfgoutputs:
+        if o['type'] == 'redis':
+            try:
+                r = logstash.RedisSink(o['host'], o['key'])
+                outputs.append(r)
+                log_output.debug("Connected to redis server '{0}'".format(o['host']))
+
+            except Exception as e:
+                log_output.error("Redis: {0}".format(e))
+
+        elif o['type'] == 'stdout':
+            outputs.append(logstash.StdoutSink())
+
+    for i in cfginputs:
+        if i['type'] != 'cloudtrail':
+            continue
+
+        # first try command-line AWS credential overrides
+        if opts.aws_key and opts.aws_secret:
+            i['aws_key'] = opts.aws_key
+            i['aws_secret'] = opts.aws_secret
+
+        # if there's an aws_role specified, try to query the
+        # ec2 metadata server for temporary credentials
+        elif 'aws_role' in i:
+            try:
+                (i['aws_key'], i['aws_secret']) = get_auth(i['aws_role'])
+            except Exception as e:
+                log_input.error("Error fetching AWS role '{}' for account/bucket {}/{}: {}".format(
+                    i['aws_role'], i['account'], i['bucket'], e))
+                sys.exit(-1)
+
+        # otherwise, credentials must be provided in the config file
+        elif ('aws_key' not in i) or ('aws_secret' not in i):
+            log_output.error("Cannot find AWS credentials - check config or provide on command-line")
+            sys.exit(-1)
+
+        input = CloudtrailInput(i['account'], i['bucket'], i['aws_key'], i['aws_secret'])
+        if 'fields' in i:
+            input.fields = i['fields']
+
+        inputs.append(input)
+
+
+    if len(inputs) < 1:
+        logging.error("No inputs, exiting")
+        sys.exit(-1)
+
+    if len(outputs) < 1:
+        logging.error("No outputs, exiting")
+        sys.exit(-1)
+    
+
+if __name__ == '__main__':
+
+    today = datetime.date.today()
+
+    argparser = argparse.ArgumentParser()
+   
+    # aws security
+    argparser.add_argument('--aws_key', type=str, help="AWS Access Key (override config file)")
+    argparser.add_argument('--aws_secret', type=str, help="AWS Secret Key (override config file)")
+
+    argparser.add_argument('--date', type=str, default=today.strftime('%Y-%m-%d'), help="Date as YYYY-MM-DD")
+    argparser.add_argument('cfgfile', nargs=1, help="JSON-format config file")
+
+    opts = argparser.parse_args(sys.argv[1:])
+
+    hostname = socket.gethostname()
+    conn = init(opts)
+
+
+    date = datetime.datetime.strptime(opts.date, '%Y-%m-%d').date()
+    for input in inputs:
+        input.get_files(date)
+

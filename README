@@ -7,3 +7,5 @@ Programs Included
 * logfile-forwarder - a tool for tailing logfiles and forwarding into Logstash,
   via Redis.
 
+* cloudtrail-importer - a tool for extracting AWS CloudTrail logs from an S3
+  bucket and importing them into Logstash, also via Redis.

@@ -62,3 +62,17 @@ class RedisSink(Sink):
         return self._conn.ping()
 
 
+def read_config(cfgfile):
+    # read config file
+    cfg = {}
+    inputs = []
+    outputs = []
+
+    with open(cfgfile, 'r') as f:
+        try:
+            cfg = json.loads(f.read())
+        except ValueError as e:
+            logging.error("Could not read config file: {0}".format(e))
+            sys.exit(-1)
+
+    return (cfg['input'], cfg['output'])
