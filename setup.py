@@ -10,6 +10,7 @@ setup(
     url             = 'https://github.com/JWPlayer/logstash-tools',
     author          = 'Michael Stella',
     author_email    = 'michael@jwplayer.com',
+    packages        = ['logstash'],
     scripts         = ['logfile-forwarder', 'cloudtrail-importer'],
     install_requires= ['redis', 'pyinotify'],
     classifiers     = [
