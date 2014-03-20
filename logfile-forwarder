@@ -54,7 +54,7 @@ import sys
 
 import logstash
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)-8s %(name)-6s %(message)s')
+logging.basicConfig(level=logging.WARN, format='%(asctime)s %(levelname)-8s %(name)-6s %(message)s')
 log_input=logging.getLogger('input')
 log_output=logging.getLogger('output')
 
@@ -234,9 +234,14 @@ def run():
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
+    argparser.add_argument('--debug', action='store_true', default=False)
     argparser.add_argument('cfgfile', nargs=1, help="JSON-format config file")
 
     opts = argparser.parse_args(sys.argv[1:])
+
+    if opts.debug:
+        log_input.setLevel(logging.DEBUG)
+        log_output.setLevel(logging.DEBUG)
 
     hostname = socket.gethostname()
     init(opts)

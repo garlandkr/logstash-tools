@@ -67,9 +67,7 @@ METADATA = 'http://169.254.169.254/latest/meta-data/iam/security-credentials/'
 
 logging.basicConfig(level=logging.WARN, format='%(asctime)s %(levelname)-8s %(name)-6s %(message)s')
 log_input=logging.getLogger('input')
-log_input.setLevel(logging.DEBUG)
 log_output=logging.getLogger('output')
-log_output.setLevel(logging.DEBUG)
 
 inputs = []
 outputs = []
@@ -222,9 +220,14 @@ if __name__ == '__main__':
     argparser.add_argument('--aws_secret', type=str, help="AWS Secret Key (override config file)")
 
     argparser.add_argument('--date', type=str, default=today.strftime('%Y-%m-%d'), help="Date as YYYY-MM-DD")
+    argparser.add_argument('--debug', action='store_true', default=False)
     argparser.add_argument('cfgfile', nargs=1, help="JSON-format config file")
 
     opts = argparser.parse_args(sys.argv[1:])
+
+    if opts.debug:
+        log_input.setLevel(logging.DEBUG)
+        log_output.setLevel(logging.DEBUG)
 
     hostname = socket.gethostname()
     conn = init(opts)

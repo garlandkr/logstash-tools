@@ -4,7 +4,7 @@ from setuptools import setup
 
 setup(
     name            = 'logstash-tools',
-    version         = '1.0.2',
+    version         = '1.0.3',
     description     = 'A collection of tools for use with logstash',
     long_description= open('README').read(),
     url             = 'https://github.com/JWPlayer/logstash-tools',
