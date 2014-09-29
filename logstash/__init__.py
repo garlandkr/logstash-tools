@@ -1,3 +1,8 @@
+"""
+Base package for logstash tools
+"""
+from __future__ import print_function
+
 __author__    = 'Michael Stella <michael@jwplayer.com>'
 __copyright__ = "Copyright (c) 2013-2014 Long Tail Ad Solutions"
 __version__   = "1.0"
@@ -30,12 +35,14 @@ class RedisSink(Sink):
     """Output to Redis"""
 
     def __init__(self, host, key, port=6379):
+        self._conn = None
         self.host = host
         self.port = port
         self.key = key
         self._connect()
 
     def _connect(self):
+        """Initiates the Redis connection"""
         self._conn = redis.StrictRedis(
                         host=self.host,
                         port=self.port,
@@ -48,13 +55,13 @@ class RedisSink(Sink):
         """Log a message"""
         try:
             self._conn.rpush(self.key, json.dumps(kwargs))
-        except redis.exceptions.ConnectionError as e1:
+        except redis.exceptions.ConnectionError:
             try:
                 self._connect()
                 log_output.info("Redis: reconnected to server {0}:{1}".format(self.host, self.port))
                 self._conn.rpush(self.key, json.dumps(kwargs))
-            except Exception as e2:
-                log_output.error("Redis: {0}".format(e2))
+            except Exception as e1:
+                log_output.error("Redis: {0}".format(e1))
 
 
     def ping(self):
@@ -63,7 +70,8 @@ class RedisSink(Sink):
 
 
 def read_config(cfgfile):
-    # read config file
+    """Read the config file"""
+
     cfg = {}
     inputs = []
     outputs = []

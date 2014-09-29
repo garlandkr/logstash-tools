@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
 from setuptools import setup
+VERSION='1.0.3'
 
 setup(
     name            = 'logstash-tools',
-    version         = '1.0.3',
+    version         = VERSION,
     description     = 'A collection of tools for use with logstash',
     long_description= open('README').read(),
     url             = 'https://github.com/JWPlayer/logstash-tools',

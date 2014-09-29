@@ -44,7 +44,6 @@ __copyright__ = "Copyright (c) 2013-2014 Long Tail Ad Solutions"
 __version__   = "1.0"
 
 import argparse
-import json
 import logging
 import os
 import pyinotify
@@ -70,7 +69,6 @@ class FileProcessor(pyinotify.ProcessEvent):
 
     def process_IN_CREATE(self, event):
         """Re-open the file when created"""
-        global inputs
 
         path = os.path.join(event.path, event.name)
         if not path in inputs:
@@ -88,7 +86,6 @@ class FileProcessor(pyinotify.ProcessEvent):
     def process_IN_DELETE(self, event):
         """Close the file handle when a file gets deleted, but don't
         stop watching it"""
-        global inputs
 
         path = os.path.join(event.path, event.name)
         if path in inputs:
@@ -98,7 +95,6 @@ class FileProcessor(pyinotify.ProcessEvent):
 
     def process_IN_MODIFY(self, event):
         """When the file has changed, read the next line and log it"""
-        global inputs
         path = os.path.join(event.path, event.name)
 
         if not path in inputs:
@@ -158,15 +154,12 @@ class FileProcessor(pyinotify.ProcessEvent):
                 o.log(**data)
 
 
-
-def init(opts):
-    global inputs
-    global outputs
+def init(args):
     global notifier
 
     logging.info("Startup")
 
-    (cfginputs, cfgoutputs) = logstash.read_config(opts.cfgfile[0])
+    (cfginputs, cfgoutputs) = logstash.read_config(args.cfgfile[0])
 
     # connect to outputs
     for o in cfgoutputs:
@@ -196,7 +189,7 @@ def init(opts):
             inputs[i['path']] = i
 
             log_input.debug("Watching file '{0}'".format(i['path']))
-            wm.add_watch(os.path.dirname(i['path']), 
+            wm.add_watch(os.path.dirname(i['path']),
                 pyinotify.IN_MODIFY|pyinotify.IN_DELETE|pyinotify.IN_CREATE
                 )
 
@@ -214,6 +207,8 @@ def init(opts):
 
 
 def run():
+    """Run the loop"""
+
     ## loop
     while True:
         try:

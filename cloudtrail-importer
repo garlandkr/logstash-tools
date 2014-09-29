@@ -58,7 +58,6 @@ import socket
 import sys
 
 import boto
-import redis
 
 import logstash
 
@@ -123,14 +122,14 @@ class CloudtrailInput(object):
                     'type': self.type,
                 })
 
-            # add fields from the config file
-            for k,v in self.fields.items():
-                if not k in rec:
-                    rec[k] = v
+                # add fields from the config file
+                for k,v in self.fields.items():
+                    if not k in rec:
+                        rec[k] = v
 
-            # send the message to all outputs
-            for o in outputs:
-                o.log(**rec)
+                # send the message to all outputs
+                for o in outputs:
+                    o.log(**rec)
 
 
 def get_auth(role):
@@ -138,10 +137,9 @@ def get_auth(role):
     Provide the role name, this returns a tuple: (aws_key, aws_secret)"""
 
     try:
-        from urllib2 import urlopen, HTTPError
-    except:
+        from urllib2 import urlopen
+    except ImportError:
         from urllib.request import urlopen
-        from urllib.error import HTTPError
 
     f = urlopen(METADATA + role, timeout=5)
     data = json.loads(f.read())
@@ -149,11 +147,9 @@ def get_auth(role):
 
 
 
-def init(opts):
-    global inputs
-    global outputs
-
-    (cfginputs, cfgoutputs) = logstash.read_config(opts.cfgfile[0])
+def init(args):
+    """Setup"""
+    (cfginputs, cfgoutputs) = logstash.read_config(args.cfgfile[0])
 
     # connect to outputs
     for o in cfgoutputs:
@@ -174,9 +170,9 @@ def init(opts):
             continue
 
         # first try command-line AWS credential overrides
-        if opts.aws_key and opts.aws_secret:
-            i['aws_key'] = opts.aws_key
-            i['aws_secret'] = opts.aws_secret
+        if args.aws_key and args.aws_secret:
+            i['aws_key'] = args.aws_key
+            i['aws_secret'] = args.aws_secret
 
         # if there's an aws_role specified, try to query the
         # ec2 metadata server for temporary credentials
@@ -193,11 +189,11 @@ def init(opts):
             log_output.error("Cannot find AWS credentials - check config or provide on command-line")
             sys.exit(-1)
 
-        input = CloudtrailInput(i['account'], i['bucket'], i['aws_key'], i['aws_secret'])
+        ctinput = CloudtrailInput(i['account'], i['bucket'], i['aws_key'], i['aws_secret'])
         if 'add_field' in i:
-            input.fields = i['add_field']
+            ctinput.fields = i['add_field']
 
-        inputs.append(input)
+        inputs.append(ctinput)
 
 
     if len(inputs) < 1:
@@ -207,14 +203,14 @@ def init(opts):
     if len(outputs) < 1:
         logging.error("No outputs, exiting")
         sys.exit(-1)
-    
+
 
 if __name__ == '__main__':
 
     today = datetime.date.today()
 
     argparser = argparse.ArgumentParser()
-   
+
     # aws security
     argparser.add_argument('--aws_key', type=str, help="AWS Access Key (override config file)")
     argparser.add_argument('--aws_secret', type=str, help="AWS Secret Key (override config file)")
@@ -233,7 +229,7 @@ if __name__ == '__main__':
     conn = init(opts)
 
 
-    date = datetime.datetime.strptime(opts.date, '%Y-%m-%d').date()
-    for input in inputs:
-        input.get_files(date)
+    input_date = datetime.datetime.strptime(opts.date, '%Y-%m-%d').date()
+    for inp in inputs:
+        inp.get_files(input_date)
 
