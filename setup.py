@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 from setuptools import setup
-VERSION='1.0.3'
+with open('VERSION', 'r') as f:
+    VERSION=f.read().strip()
 
 setup(
     name            = 'logstash-tools',
