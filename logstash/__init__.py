@@ -12,8 +12,12 @@ import logging
 import os
 import redis
 import sys
+import time
+
+DEFAULT_RETRY = 10
 
 log_output=logging.getLogger('output')
+log_output.setLevel(logging.INFO)
 
 class Sink(object):
     """Output sink base class"""
@@ -35,6 +39,7 @@ class RedisSink(Sink):
     """Output to Redis"""
 
     def __init__(self, host, key, port=6379):
+        self._backoff = DEFAULT_RETRY
         self._conn = None
         self.host = host
         self.port = port
@@ -43,6 +48,7 @@ class RedisSink(Sink):
 
     def _connect(self):
         """Initiates the Redis connection"""
+        log_output.info("Redis: connecting to {}:{}".format(self.host, self.port))
         self._conn = redis.StrictRedis(
                         host=self.host,
                         port=self.port,
@@ -55,7 +61,13 @@ class RedisSink(Sink):
         """Log a message"""
         try:
             self._conn.rpush(self.key, json.dumps(kwargs))
-        except redis.exceptions.ConnectionError:
+            self._backoff = DEFAULT_RETRY
+        except redis.exceptions.RedisError as e:
+            log_output.error("Redis: {}".format(e))
+            time.sleep(self._backoff)
+            self._backoff = self._backoff * 2
+
+            # try to reconnect
             try:
                 self._connect()
                 log_output.info("Redis: reconnected to server {0}:{1}".format(self.host, self.port))
