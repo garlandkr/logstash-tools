@@ -29,7 +29,7 @@ Config file is JSON format, similar options as logstash itself.  Sample:
 Input options:
     type:       logstash 'type' field, for sorting logfile type.  Must be 'cloudtrail'.
     add_field:  optional hash of fields + arguments to add to the message
-    aws_role:   Optional: IAM instance-profile role
+    aws_role:   Optional IAM instance-profile role (preferred)
     aws_key:    Optional AWS access key
     aws_secret: Optional AWS secret key (used with 'aws_key')
     account:    AWS account number
@@ -46,7 +46,7 @@ Packages required: redis, boto
 
 __author__    = 'Michael Stella <michael@jwplayer.com>'
 __copyright__ = "Copyright (c) 2014 Long Tail Ad Solutions"
-__version__   = "1.0"
+__version__   = "1.2"
 
 import argparse
 import datetime
@@ -58,6 +58,7 @@ import socket
 import sys
 
 import boto
+from boto.sts import STSConnection
 
 import logstash
 
@@ -77,12 +78,12 @@ class CloudtrailInput(object):
 
     type = 'cloudtrail'
 
-    def __init__(self, account, bucket, aws_key, aws_secret, fields={}):
+    def __init__(self, account, bucket, auth, fields={}):
         self.account = account
         self.bucket = bucket
         self.fields = fields
 
-        self.conn = boto.connect_s3(aws_key, aws_secret)
+        self.conn = boto.connect_s3(**auth)
 
 
     def get_files(self, date):
@@ -96,17 +97,21 @@ class CloudtrailInput(object):
         for key in bucket.list(prefix):
             log_input.debug(" reading file {}".format(key.name))
 
-            # download the file into a tempfile
-            tmpname = '/tmp/{}'.format(os.path.basename(key.name))
-            with open(tmpname , 'wb') as f:
-                key.get_file(f)
+            try:
+                # download the file into a tempfile
+                tmpname = '/tmp/{}'.format(os.path.basename(key.name))
+                with open(tmpname , 'wb') as f:
+                    key.get_file(f)
 
-            # send the downloaded logfile to processing
-            self.parse_file(tmpname)
+                # send the downloaded logfile to processing
+                self.parse_file(tmpname)
 
-            # remove temporary file
-            if os.path.exists(tmpname):
-                os.unlink(tmpname)
+                # remove temporary file
+                if os.path.exists(tmpname):
+                    os.unlink(tmpname)
+
+            except boto.exception.S3ResponseError as e:
+                log_input.error("{} when reading file {} - skipping".format(e.message, key.name))
 
 
     def parse_file(self, fn):
@@ -132,19 +137,23 @@ class CloudtrailInput(object):
                     o.log(**rec)
 
 
-def get_auth(role):
-    """Obtain a temporary authentication key from the metadata server.
-    Provide the role name, this returns a tuple: (aws_key, aws_secret)"""
+def get_auth(account, role):
+    """Obtain a temporary authentication key via STS.
+    This assumes your server is running with an instance role that allows
+    'AssumeRoles' permission.
+    Provide the role name, this returns a dictionary with these keys:
+        (aws_access_key_id, aws_secret_access_key, security_token)"""
 
-    try:
-        from urllib2 import urlopen
-    except ImportError:
-        from urllib.request import urlopen
+    stsc = STSConnection()
+    assumedRoleObject = stsc.assume_role(
+        role_arn='arn:aws:iam::{}:role/{}'.format(account, role),
+        role_session_name='cloudtrail-importer')
 
-    f = urlopen(METADATA + role, timeout=5)
-    data = json.loads(f.read())
-    return (data['AccessKeyId'], data['SecretAccessKey'])
-
+    return {
+        'aws_access_key_id':        assumedRoleObject.credentials.access_key,
+        'aws_secret_access_key':    assumedRoleObject.credentials.secret_key,
+        'security_token':           assumedRoleObject.credentials.session_token,
+    }
 
 
 def init(args):
@@ -169,27 +178,42 @@ def init(args):
         if i['type'] != 'cloudtrail':
             continue
 
+        auth = {}
         # first try command-line AWS credential overrides
         if args.aws_key and args.aws_secret:
-            i['aws_key'] = args.aws_key
-            i['aws_secret'] = args.aws_secret
+            auth = {
+                'aws_access_key_id': args.aws_key,
+                'aws_secret_access_key': args.aws_secret
+            }
+
+        # next, command-line provided IAM role
+        elif args.aws_role:
+            try:
+                auth = get_auth(i['account'], args.aws_role)
+            except Exception as e:
+                log_input.error("Error fetching AWS role '{}' for account {}: {}".format(args.aws_role, i['account'], e))
+                sys.exit(-1)
 
         # if there's an aws_role specified, try to query the
         # ec2 metadata server for temporary credentials
         elif 'aws_role' in i:
             try:
-                (i['aws_key'], i['aws_secret']) = get_auth(i['aws_role'])
+                auth = get_auth(i['account'], i['aws_role'])
             except Exception as e:
-                log_input.error("Error fetching AWS role '{}' for account/bucket {}/{}: {}".format(
-                    i['aws_role'], i['account'], i['bucket'], e))
+                log_input.error("Error fetching AWS role '{}' for account {}: {}".format(i['aws_role'], i['account'], e))
                 sys.exit(-1)
 
         # otherwise, credentials must be provided in the config file
-        elif ('aws_key' not in i) or ('aws_secret' not in i):
-            log_output.error("Cannot find AWS credentials - check config or provide on command-line")
-            sys.exit(-1)
+        else:
+            if ('aws_key' not in i) or ('aws_secret' not in i):
+                log_output.error("Cannot find AWS credentials - check config or provide on command-line")
+                sys.exit(-1)
+            auth = {
+                'aws_access_key_id':     i['aws_key'],
+                'aws_secret_access_key': i['aws_secret'],
+            }
 
-        ctinput = CloudtrailInput(i['account'], i['bucket'], i['aws_key'], i['aws_secret'])
+        ctinput = CloudtrailInput(i['account'], i['bucket'], auth)
         if 'add_field' in i:
             ctinput.fields = i['add_field']
 
@@ -214,6 +238,7 @@ if __name__ == '__main__':
     # aws security
     argparser.add_argument('--aws_key', type=str, help="AWS Access Key (override config file)")
     argparser.add_argument('--aws_secret', type=str, help="AWS Secret Key (override config file)")
+    argparser.add_argument('--aws_role', type=str, help="IAM role in target accounts")
 
     argparser.add_argument('--date', type=str, default=today.strftime('%Y-%m-%d'), help="Date as YYYY-MM-DD")
     argparser.add_argument('--debug', action='store_true', default=False)
