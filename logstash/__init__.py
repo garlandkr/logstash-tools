@@ -17,7 +17,7 @@ import time
 DEFAULT_RETRY = 10
 
 log_output=logging.getLogger('output')
-log_output.setLevel(logging.INFO)
+log_output.setLevel(logging.WARN)
 
 class Sink(object):
     """Output sink base class"""
