@@ -65,8 +65,6 @@ notifier = None
 class FileProcessor(pyinotify.ProcessEvent):
     """Processor class for inotify"""
 
-    linebuffer = []
-
     def process_IN_CREATE(self, event):
         """Re-open the file when created"""
 
@@ -108,6 +106,10 @@ class FileProcessor(pyinotify.ProcessEvent):
 
         fh = i['fh']
 
+        # line buffer for this file
+        if not 'buffer' in i:
+            i['buffer'] = []
+
         # figure out if we're seek'd past the end of the file,
         # and if so, seek back to the begining
         size = os.stat(path).st_size
@@ -127,31 +129,39 @@ class FileProcessor(pyinotify.ProcessEvent):
 
             # see if this is a multiline match
             if 'multiline' in i and re.match(i['multiline'], line, re.I):
-                self.linebuffer.append(line)
+                i['buffer'].append(line)
                 continue
 
-            if self.linebuffer:
-                # join up the multiline buffer
-                self.linebuffer.append(line)
-                line = '\n'.join(self.linebuffer)
-                self.linebuffer = []
+            # this new line is not part of the previous multi-line,
+            # so we send the buffer now
+            if i['buffer']:
+                # send any previous messages
+                send_buffer(i, outputs, path, hostname)
+                # add the current line to the buffer
+                i['buffer'] = [line]
 
-            data = {
-                'message':  line,
-                'type':     i['type'],
-                'path':     path,
-                'host':     hostname,
-            }
+        # flush the buffer when we exit
+        if i['buffer']:
+            send_buffer(i, outputs, path, hostname)
 
-            # add fields from the config file
-            if 'add_field' in i:
-                for k,v in i['add_field'].items():
-                    if not k in data:
-                        data[k] = v
 
-            # send the message to all outputs
-            for o in outputs:
-                o.log(**data)
+def send_buffer(i, outputs, path, hostname):
+    line = '\n'.join(i['buffer'])
+    data = {
+        'message':  line,
+        'type':     i['type'],
+        'path':     path,
+        'host':     hostname,
+    }
+
+    # add fields from the config file
+    for (k,v) in i.get('add_field', {}).items():
+        if not k in data:
+            data[k] = v
+
+    # send the message to all outputs
+    for o in outputs:
+        o.log(**data)
 
 
 def init(args):
