@@ -140,9 +140,9 @@ class FileProcessor(pyinotify.ProcessEvent):
                 # add the current line to the buffer
                 i['buffer'] = [line]
 
-        # flush the buffer when we exit
-        if i['buffer']:
-            send_buffer(i, outputs, path, hostname)
+#        # flush the buffer when we exit
+#        if i['buffer']:
+#            send_buffer(i, outputs, path, hostname)
 
 
 def send_buffer(i, outputs, path, hostname):
@@ -201,7 +201,7 @@ def init(args):
             log_input.debug("Watching file '{0}'".format(i['path']))
             wm.add_watch(os.path.dirname(i['path']),
                 pyinotify.IN_MODIFY|pyinotify.IN_DELETE|pyinotify.IN_CREATE
-                )
+            )
 
         except IOError as e:
             log_input.error(e)
