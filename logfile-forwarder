@@ -137,8 +137,9 @@ class FileProcessor(pyinotify.ProcessEvent):
             if i['buffer']:
                 # send any previous messages
                 send_buffer(i, outputs, path, hostname)
-                # add the current line to the buffer
-                i['buffer'] = [line]
+
+            # add the current line to the buffer
+            i['buffer'] = [line]
 
 #        # flush the buffer when we exit
 #        if i['buffer']:
