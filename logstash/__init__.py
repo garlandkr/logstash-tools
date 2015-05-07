@@ -85,8 +85,6 @@ def read_config(cfgfile):
     """Read the config file"""
 
     cfg = {}
-    inputs = []
-    outputs = []
 
     with open(cfgfile, 'r') as f:
         try:

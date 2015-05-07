@@ -38,7 +38,7 @@ load-plugins=
 # --enable=similarities". If you want to run only the classes checker, but have
 # no Warning level messages displayed, use"--disable=all --enable=classes
 # --disable=W"
-disable=C0103,C0326
+disable=C0103,C0326,C0330,W1202,R0801,R0903,R0913
 
 
 [REPORTS]
@@ -100,7 +100,6 @@ ignore-docstrings=yes
 # Ignore imports when computing similarities.
 ignore-imports=no
 
-
 [FORMAT]
 
 # Maximum number of characters on a single line.
@@ -122,6 +121,9 @@ max-module-lines=1000
 # String used as indentation unit. This is usually " " (4 spaces) or "\t" (1
 # tab).
 indent-string='    '
+
+# stupid
+logging-format-interpolation=no
 
 
 [TYPECHECK]

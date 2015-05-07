@@ -147,6 +147,8 @@ class FileProcessor(pyinotify.ProcessEvent):
 
 
 def send_buffer(i, outputs, path, hostname):
+    """Send the buffer to the various outputs"""
+
     line = '\n'.join(i['buffer'])
     data = {
         'message':  line,
